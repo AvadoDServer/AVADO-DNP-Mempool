@@ -485,14 +485,14 @@ def build_model(info):
     if node.get("blocks"):
         model["facts"].append({"k": "Newest block", "v": fmt_int(node["blocks"])})
 
-    open_s = {"id": "open", "title": "Open the explorer"}
     if info.get("ready"):
-        open_s["links"] = [{"label": "Open the Bitcoin Explorer", "href": "/", "style": "primary"}]
-        open_s["text"] = ["Bookmark http://mempool.my.ava.do on your computer or phone (on the AVADO Wi-Fi or with "
-                          "Remote Access)."]
-    else:
-        open_s["text"] = ["The button appears here when the explorer is ready."]
-    model["sections"].append(open_s)
+        # Only when there is something to open: an empty "the button appears here" card was noise.
+        model["sections"].append({
+            "id": "open", "title": "Open the explorer",
+            "text": ["Bookmark http://mempool.my.ava.do on your computer or phone (on the AVADO Wi-Fi or with "
+                     "Remote Access)."],
+            "links": [{"label": "Open the Bitcoin Explorer", "href": "/", "style": "primary"}],
+        })
 
     look = {"id": "lookups", "title": "Look up your own addresses and transactions"}
     if pruned:
@@ -511,14 +511,7 @@ def build_model(info):
                         "by itself. Until then you can look up transactions and blocks."]
     model["sections"].append(look)
 
-    model["sections"].append({
-        "id": "connect", "title": "Connect your hardware wallet to your own node",
-        "text": ["Wallets such as Sparrow and Electrum connect through the Electrum Server app. Its page shows the "
-                 "exact address to type into your wallet."],
-        "links": [{"label": "Open the Electrum Server page", "href": "http://fulcrum.my.ava.do", "style": None}]
-        if info.get("fulcrum") != "missing" else
-        [{"label": "Open the Bitcoin Node page", "href": "http://bitcoincore.my.ava.do", "style": None}],
-    })
+    model["sections"].append(connect_section(pruned, info.get("fulcrum")))
     model["sections"].append({
         "id": "privacy", "title": "What leaves your AVADO",
         "text": ["Your look-ups stay on your AVADO. The explorer only fetches Bitcoin prices from public exchanges and the "
@@ -531,6 +524,27 @@ def build_model(info):
         ],
     })
     return model
+
+
+def connect_section(pruned, fulcrum):
+    s = {"id": "connect", "title": "Connect your hardware wallet to your own node"}
+    if pruned:
+        # The Electrum Server cannot run on a space-saving node: send owners to the switch, not to it.
+        s["text"] = ["Wallets such as Sparrow connect through the Electrum Server, which needs the full Bitcoin node. "
+                     "Yours is in space-saving mode. The Bitcoin Node page offers \"Switch to the full node\" when "
+                     "your AVADO has enough free space (about 1.5 TB)."]
+        s["links"] = [{"label": "Open the Bitcoin Node page", "href": "http://bitcoincore.my.ava.do/#connect",
+                       "style": None}]
+    elif fulcrum != "missing":
+        s["text"] = ["Wallets such as Sparrow and Electrum connect through the Electrum Server app. Its page shows the "
+                     "exact address to type into your wallet."]
+        s["links"] = [{"label": "Open the Electrum Server page", "href": "http://fulcrum.my.ava.do", "style": None}]
+    else:
+        s["text"] = ["Wallets such as Sparrow and Electrum connect through the Electrum Server app. The Bitcoin Node "
+                     "page shows how to install it."]
+        s["links"] = [{"label": "Open the Bitcoin Node page", "href": "http://bitcoincore.my.ava.do/#connect",
+                       "style": None}]
+    return s
 
 
 if __name__ == "__main__":

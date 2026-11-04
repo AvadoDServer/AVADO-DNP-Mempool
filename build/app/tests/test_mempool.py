@@ -66,6 +66,28 @@ class ModelTest(unittest.TestCase):
         look = [s for s in m["sections"] if s["id"] == "lookups"][0]
         self.assertIn("space-saving", " ".join(look["text"]))
 
+    def test_pruned_wallet_card_points_to_the_full_node_switch(self):
+        for fulcrum in ("missing", "busy", "ready"):
+            m = model(node=node(pruned=True), ready=True, fulcrum=fulcrum)
+            connect = [s for s in m["sections"] if s["id"] == "connect"][0]
+            self.assertIn("Switch to the full node", " ".join(connect["text"]))
+            self.assertEqual(connect["links"][0]["href"], "http://bitcoincore.my.ava.do/#connect")
+            self.assertNotIn("fulcrum.my.ava.do", repr(connect))
+
+    def test_full_node_wallet_card_points_to_the_electrum_server(self):
+        m = model(node=node(), ready=True, fulcrum="busy")
+        connect = [s for s in m["sections"] if s["id"] == "connect"][0]
+        self.assertEqual(connect["links"][0]["href"], "http://fulcrum.my.ava.do")
+
+    def test_open_card_only_when_ready(self):
+        m = model(node=node(), ready=False)
+        self.assertNotIn("open", [s["id"] for s in m["sections"]])
+        self.assertNotIn("button appears", repr(m))
+        m = model(node=node(verificationprogress=0.5, initialblockdownload=True))
+        self.assertNotIn("open", [s["id"] for s in m["sections"]])
+        m = model(node=node(), ready=True)
+        self.assertEqual(m["sections"][0]["id"], "open")
+
     def test_electrum_busy(self):
         m = model(node=node(), ready=True, fulcrum="busy")
         look = [s for s in m["sections"] if s["id"] == "lookups"][0]

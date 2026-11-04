@@ -185,11 +185,29 @@ def http_json(url, timeout=5):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def port_open(host, port):
+ELECTRUM_HELLO = b'{"jsonrpc": "2.0", "id": 0, "method": "server.version", "params": ["avado-explorer", "1.4"]}\n'
+
+
+def electrum_answers(host, port, timeout=3):
+    """True when an Electrum server answers server.version on host:port.
+
+    A bare TCP connect is not enough: the Electrum Server app's port gate accepts
+    connections while Fulcrum itself is still waiting for the node, and then
+    closes them, so the explorer would switch to it too early and log a
+    connection error every second."""
     try:
-        with socket.create_connection((host, port), timeout=3):
-            return True
-    except OSError:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            sock.sendall(ELECTRUM_HELLO)
+            buf = b""
+            while b"\n" not in buf and len(buf) < 65536:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+        reply = json.loads(buf.split(b"\n", 1)[0].decode("utf-8", "replace"))
+        return isinstance(reply, dict) and reply.get("id") == 0 and "result" in reply
+    except (OSError, ValueError):
         return False
 
 
@@ -307,7 +325,7 @@ class App:
         """'missing' (not installed), 'ready' (answers wallets) or 'busy'."""
         if not avadoweb.resolve_ips(FULCRUM_HOST):
             return "missing"
-        return "ready" if port_open(FULCRUM_HOST, 50001) else "busy"
+        return "ready" if electrum_answers(FULCRUM_HOST, 50001) else "busy"
 
     # -- the loop
     def loop(self):

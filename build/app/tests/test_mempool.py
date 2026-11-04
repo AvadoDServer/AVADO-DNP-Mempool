@@ -84,5 +84,60 @@ class ModelTest(unittest.TestCase):
         self.assertNotIn("password", repr(m).lower())
 
 
+class ElectrumProbeTest(unittest.TestCase):
+    """The explorer must not take a port that only accepts connections for a ready server."""
+
+    def serve_once(self, handler):
+        import socket
+        import threading
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+
+        def run():
+            conn, _ = srv.accept()
+            with conn:
+                handler(conn)
+            srv.close()
+
+        threading.Thread(target=run, daemon=True).start()
+        return srv.getsockname()[1]
+
+    def test_real_server_answers(self):
+        def handler(conn):
+            conn.recv(4096)
+            conn.sendall(b'{"jsonrpc": "2.0", "id": 0, "result": ["Fulcrum 2.1.4", "1.4"]}\n')
+        self.assertTrue(main.electrum_answers("127.0.0.1", self.serve_once(handler)))
+
+    def test_gate_without_server_is_not_ready(self):
+        def handler(conn):
+            conn.recv(4096)  # the port gate: accepts, then closes because Fulcrum is not up
+        self.assertFalse(main.electrum_answers("127.0.0.1", self.serve_once(handler)))
+
+    def test_error_reply_is_not_ready(self):
+        def handler(conn):
+            conn.recv(4096)
+            conn.sendall(b'{"jsonrpc": "2.0", "id": 0, "error": {"code": -32600, "message": "busy"}}\n')
+        self.assertFalse(main.electrum_answers("127.0.0.1", self.serve_once(handler)))
+
+    def test_nothing_listening(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        self.assertFalse(main.electrum_answers("127.0.0.1", port, timeout=1))
+
+
+class FramingTest(unittest.TestCase):
+    """The Admin's Setup tab shows this page in a frame; other sites may not."""
+
+    def test_only_the_admin_may_frame_the_page(self):
+        import avadoweb
+        csp = avadoweb.SECURITY_HEADERS["Content-Security-Policy"]
+        self.assertIn("frame-ancestors 'self' http://my.ava.do https://my.ava.do;", csp)
+        self.assertNotIn("X-Frame-Options", avadoweb.SECURITY_HEADERS)
+
+
 if __name__ == "__main__":
     unittest.main()

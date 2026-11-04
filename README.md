@@ -8,8 +8,8 @@ new blocks, looked up on the owner's own node. The explorer is at
 explorer has data).
 
 Needs the Bitcoin Node package (`bitcoincore.avado.dnp.dappnode.eth`, repo
-AVADO-DNP-BitcoinCore), full or pruned. Uses the Electrum Server package for
-address look-ups when it is installed and ready.
+AVADO-DNP-BitcoinCore) with the full history. Uses the Electrum Server package
+for address look-ups when it is installed and ready.
 
 ## What it does
 
@@ -21,8 +21,12 @@ backend, nginx and a small Python supervisor:
   (readable only by this app) and never shows it.
 - **Switches to the Electrum Server by itself** when it is installed and
   answering, and back to node-only when it is removed.
-- **On a pruned node** it limits the block statistics to the blocks the node
-  still has, and the page explains what is not available.
+- **Needs the full node.** mempool reads the transactions of every new block
+  with `getrawtransaction`, which needs the node's transaction index
+  (`txindex`); a pruned (space-saving) node cannot keep one. On a pruned node
+  the explorer does not start: the page says "The Explorer needs the full node"
+  and links to "Switch to the full node" on the Bitcoin Node page. When the node
+  is full again, the explorer starts by itself.
 - **No paid or external mempool.space services**: accelerator, Lightning and
   the services proxy are off (the services route answers 404). Only Bitcoin
   prices from public exchanges and the mining-pool list from GitHub are

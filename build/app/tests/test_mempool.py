@@ -40,12 +40,11 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(c["MEMPOOL"]["BACKEND"], "electrum")
         self.assertEqual(c["ELECTRUM"]["HOST"], "DAppNodePackage-fulcrum.avado.dnp.dappnode.eth")
 
-    def test_indexing_full(self):
-        self.assertEqual(main.indexing_amount(node()), 11000)
-
-    def test_indexing_pruned_stays_within_kept_blocks(self):
-        self.assertEqual(main.indexing_amount(node(pruned=True, pruneheight=914000)), 5700)
-        self.assertEqual(main.indexing_amount(node(pruned=True, pruneheight=919900)), 0)
+    def test_runs_only_on_the_full_node(self):
+        # mempool needs txindex (getrawtransaction for every new block); a pruned node cannot have one.
+        self.assertTrue(main.can_run(node()))
+        self.assertFalse(main.can_run(node(pruned=True)))
+        self.assertFalse(main.can_run({}))
 
 
 class UseElectrumTest(unittest.TestCase):
@@ -58,6 +57,71 @@ class UseElectrumTest(unittest.TestCase):
         self.assertFalse(main.use_electrum(node(), "missing", True))
         self.assertTrue(main.use_electrum(node(), "busy", True))  # restarting: keep it
         self.assertFalse(main.use_electrum(node(), "busy", False))
+
+
+class FakeBackend:
+    def __init__(self):
+        self.up = False
+        self.starts = 0
+
+    def running(self):
+        return self.up
+
+    def stop(self, *_a, **_k):
+        self.up = False
+
+    def restart(self):
+        self.up = True
+        self.starts += 1
+
+
+class BackendTest(unittest.TestCase):
+    """Space-saving node: the explorer stops; full again: it starts by itself."""
+
+    def app(self):
+        import tempfile
+        app = main.App.__new__(main.App)
+        app.bitcoin_host, app.login, app.db_ready, app.db_login = "node", ("mempool", "pw", 8332), True, {"password": "db"}
+        app.backend, app.backend_key, app.electrum, app.node = FakeBackend(), None, False, {}
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.old_conf = main.BACKEND_CONF
+        main.BACKEND_CONF = os.path.join(self.dir.name, "conf.json")
+        self.addCleanup(setattr, main, "BACKEND_CONF", self.old_conf)
+        return app
+
+    def test_space_saving_stops_and_full_starts_again(self):
+        app = self.app()
+        app.node = node()
+        app.apply_backend("missing")
+        self.assertTrue(app.backend.running())
+        app.node = node(pruned=True)
+        app.apply_backend("ready")
+        self.assertFalse(app.backend.running())
+        app.apply_backend("ready")
+        self.assertFalse(app.backend.running())
+        self.assertEqual(app.backend.starts, 1)
+        # back to the full node (it downloads again): starts by itself
+        app.node = node(initialblockdownload=True, verificationprogress=0.01)
+        app.apply_backend("busy")
+        self.assertTrue(app.backend.running())
+        self.assertEqual(app.backend.starts, 2)
+
+    def test_never_starts_on_a_space_saving_node(self):
+        app = self.app()
+        app.node = node(pruned=True)
+        app.apply_backend("missing")
+        self.assertFalse(app.backend.running())
+        self.assertFalse(os.path.exists(main.BACKEND_CONF))
+
+    def test_node_away_keeps_what_runs(self):
+        app = self.app()
+        app.node = node()
+        app.apply_backend("missing")
+        app.node = {}  # the node restarts
+        app.apply_backend("missing")
+        self.assertTrue(app.backend.running())
+        self.assertEqual(app.backend.starts, 1)
 
 
 class ModelTest(unittest.TestCase):
@@ -73,18 +137,19 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(m["sections"][0]["links"][0]["href"], "/")
         self.assertIn({"k": "Fee for the next block", "v": "12 sat/vB"}, m["facts"])
 
-    def test_pruned_explains_limits(self):
-        m = model(node=node(pruned=True), ready=True)
-        look = [s for s in m["sections"] if s["id"] == "lookups"][0]
-        self.assertIn("space-saving", " ".join(look["text"]))
-
-    def test_pruned_wallet_card_points_to_the_full_node_switch(self):
-        for fulcrum in ("missing", "busy", "ready"):
-            m = model(node=node(pruned=True), ready=True, fulcrum=fulcrum)
-            connect = [s for s in m["sections"] if s["id"] == "connect"][0]
-            self.assertIn("Switch to the full node", " ".join(connect["text"]))
-            self.assertEqual(connect["links"][0]["href"], "http://bitcoincore.my.ava.do/#connect")
-            self.assertNotIn("fulcrum.my.ava.do", repr(connect))
+    def test_space_saving_node_shows_one_message_and_the_switch(self):
+        for info in ({}, {"ready": True, "fulcrum": "ready"}, {"node": node(pruned=True, initialblockdownload=True,
+                                                                        verificationprogress=0.3)}):
+            m = model(**dict({"node": node(pruned=True)}, **info))
+            self.assertEqual(m["state"], "warn")
+            self.assertEqual(m["headline"], "The Explorer needs the full node")
+            self.assertNotIn("progress", m)
+            self.assertEqual(len(m["sections"]), 1)
+            link = m["sections"][0]["links"][0]
+            self.assertEqual(link["label"], "Switch to the full node")
+            self.assertEqual(link["href"], "http://bitcoincore.my.ava.do/#connect")
+            self.assertNotIn("fulcrum.my.ava.do", repr(m))
+            self.assertNotIn("Open the Bitcoin Explorer", repr(m))
 
     def test_full_node_wallet_card_points_to_the_electrum_server(self):
         m = model(node=node(), ready=True, fulcrum="busy")

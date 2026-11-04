@@ -10,8 +10,11 @@ port 80) and this supervisor, whose plain-language page is at /avado/.
   readable only by this app, and never shown.
 - Uses the Electrum Server app for address and transaction look-ups when it is
   installed and ready; otherwise the backend talks to the node only.
-- On a space-saving (pruned) node it limits the block statistics to the blocks
-  the node still has.
+- Needs the full Bitcoin node: mempool fetches the transactions of every new
+  block with getrawtransaction, which needs the node's transaction index, and a
+  space-saving (pruned) node cannot keep one. On such a node the explorer does
+  not start; the page says so and links to "Switch to the full node". When the
+  node is full again, the explorer starts by itself.
 - Until the explorer has data, http://mempool.my.ava.do/ opens the status page
   instead of an empty explorer.
 """
@@ -53,6 +56,7 @@ DB_USER = "explorer"  # the explorer's database login; not the OS user
 FULCRUM_HOST = "DAppNodePackage-fulcrum.avado.dnp.dappnode.eth"
 CHAIN_TO_NETWORK = {"main": "mainnet", "test": "testnet", "testnet4": "testnet4", "signet": "signet", "regtest": "regtest"}
 GB = 1000 ** 3
+INDEXING_BLOCKS = 11000  # recent blocks indexed for the mining statistics
 
 
 class Service:
@@ -171,13 +175,12 @@ def backend_config(chain, rpc, electrum, db, indexing_blocks):
     }
 
 
-def indexing_amount(node):
-    """How many recent blocks to index for the mining statistics. A pruned node
-    has only its newest blocks; asking for older ones fails again and again."""
-    if not node.get("pruned"):
-        return 11000
-    kept = int(node.get("blocks") or 0) - int(node.get("pruneheight") or 0)
-    return max(0, min(11000, kept - 300))
+def can_run(node):
+    """Whether the explorer can run on this node. Upstream mempool reads the
+    transactions of every new block with getrawtransaction, which needs txindex;
+    a space-saving (pruned) node cannot have one, so the explorer would stall on
+    the first new block ("Cannot fetch tx ... Use -txindex", seen on the test box)."""
+    return bool(node) and not node.get("pruned")
 
 
 def http_json(url, timeout=5):
@@ -349,23 +352,36 @@ class App:
                 for svc in (self.mariadb, self.nginx, self.backend):
                     svc.tick()
                 self.check_node()
-                want_electrum = use_electrum(self.node, self.fulcrum_state(), self.electrum)
-                if self.node and self.login and self.db_ready:
-                    key = (want_electrum, self.login, self.node.get("chain"), indexing_amount(self.node) // 1000)
-                    if key != self.backend_key:
-                        conf = backend_config(self.node.get("chain"), {
-                            "host": self.bitcoin_host, "port": self.login[2], "user": self.login[0],
-                            "password": self.login[1]}, want_electrum, self.db_login, indexing_amount(self.node))
-                        avadoweb.write_text(BACKEND_CONF, json.dumps(conf, indent=2), mode=0o600)
-                        log("explorer settings: %s, %d blocks of statistics" % (
-                            "with the Electrum Server" if want_electrum else "node only", indexing_amount(self.node)))
-                        self.electrum = want_electrum
-                        self.backend_key = key
-                        self.backend.restart()
+                self.apply_backend(self.fulcrum_state())
                 self.update_ready()
             except Exception as err:  # keep the loop alive
                 log("check failed:", repr(err))
             time.sleep(10)
+
+    def apply_backend(self, fulcrum):
+        """Starts, restarts or stops the explorer backend to match the node and the Electrum Server."""
+        if self.node and not can_run(self.node):
+            # Space-saving node: no explorer until the node is full again (then it starts by itself).
+            if self.backend_key is not None or self.backend.running():
+                log("the Bitcoin node is in space-saving mode: the explorer needs the full node, stopping it")
+                self.backend.stop()
+                self.backend_key = None
+                self.electrum = False
+            return
+        if not (self.node and self.login and self.db_ready):
+            return
+        want_electrum = use_electrum(self.node, fulcrum, self.electrum)
+        key = (want_electrum, self.login, self.node.get("chain"))
+        if key == self.backend_key:
+            return
+        conf = backend_config(self.node.get("chain"), {
+            "host": self.bitcoin_host, "port": self.login[2], "user": self.login[0],
+            "password": self.login[1]}, want_electrum, self.db_login, INDEXING_BLOCKS)
+        avadoweb.write_text(BACKEND_CONF, json.dumps(conf, indent=2), mode=0o600)
+        log("explorer settings: %s" % ("with the Electrum Server" if want_electrum else "node only"))
+        self.electrum = want_electrum
+        self.backend_key = key
+        self.backend.restart()
 
     def explorer_height(self):
         if not self.backend.running():
@@ -445,7 +461,6 @@ def build_model(info):
     model = {"title": "Bitcoin Explorer", "facts": [], "sections": [], "refresh": 10}
     progress = float(node.get("verificationprogress") or 0)
     ibd = bool(node) and (bool(node.get("initialblockdownload")) or progress < 0.9999)
-    pruned = bool(node.get("pruned"))
 
     if not info.get("nodeInstalled"):
         model["state"] = "error"
@@ -457,6 +472,18 @@ def build_model(info):
         model["headline"] = "The Bitcoin Node does not let the explorer in"
         model["text"] = ["Restart the Bitcoin Node app and then this app in the AVADO Admin. If this stays, contact "
                          "AVADO support."]
+    elif node and not can_run(node):
+        # One plain message and one way out, like the Electrum Server.
+        model["state"] = "warn"
+        model["headline"] = "The Explorer needs the full node"
+        model["text"] = ["Your Bitcoin Node is in space-saving mode: it keeps only the newest blocks. The Explorer "
+                         "needs the whole Bitcoin history, so it does not start.",
+                         "The full node needs about 1.5 TB of free space. Switch on the Bitcoin Node page; the "
+                         "Explorer then starts by itself."]
+        model["sections"].append({"id": "node", "links": [
+            {"label": "Switch to the full node", "href": "http://bitcoincore.my.ava.do/#connect", "style": "primary"}]})
+        model["facts"].append({"k": "Free on your AVADO", "v": avadoweb.human_bytes(info.get("free"))})
+        return model
     elif info.get("dbError"):
         model["state"] = "error"
         model["headline"] = "The explorer's database does not start"
@@ -504,12 +531,7 @@ def build_model(info):
         })
 
     look = {"id": "lookups", "title": "Look up your own addresses and transactions"}
-    if pruned:
-        look["tone"] = "info"
-        look["text"] = ["Your Bitcoin Node is in space-saving mode, so the explorer shows fees, waiting transactions and "
-                        "the newest blocks. It cannot look up older transactions or addresses: that needs the full node "
-                        "and the Electrum Server."]
-    elif info.get("electrum"):
+    if info.get("electrum"):
         look["text"] = ["Address look-ups go through your own Electrum Server, so you can check your addresses and "
                         "transactions here without telling any website about them."]
     elif info.get("fulcrum") == "busy":
@@ -520,14 +542,14 @@ def build_model(info):
                         "by itself. Until then you can look up transactions and blocks."]
     model["sections"].append(look)
 
-    model["sections"].append(connect_section(pruned, info.get("fulcrum")))
+    model["sections"].append(connect_section(info.get("fulcrum")))
     model["sections"].append({
         "id": "privacy", "title": "What leaves your AVADO",
         "text": ["Your look-ups stay on your AVADO. The explorer only fetches Bitcoin prices from public exchanges and the "
                  "list of mining pool names from GitHub; neither learns what you look at."],
         "advanced": [
             {"k": "Address look-ups", "v": "Through your Electrum Server" if info.get("electrum") else "Not available yet"},
-            {"k": "Bitcoin node mode", "v": "Space-saving (pruned)" if pruned else ("Full node" if node else "Unknown")},
+            {"k": "Bitcoin node mode", "v": "Full node" if node else "Unknown"},
             {"k": "Explorer has block", "v": fmt_int(info["height"]) if info.get("height") is not None else "Not yet"},
             {"k": "Free on your AVADO", "v": avadoweb.human_bytes(info.get("free"))},
         ],
@@ -535,16 +557,9 @@ def build_model(info):
     return model
 
 
-def connect_section(pruned, fulcrum):
+def connect_section(fulcrum):
     s = {"id": "connect", "title": "Connect your hardware wallet to your own node"}
-    if pruned:
-        # The Electrum Server cannot run on a space-saving node: send owners to the switch, not to it.
-        s["text"] = ["Wallets such as Sparrow connect through the Electrum Server, which needs the full Bitcoin node. "
-                     "Yours is in space-saving mode. The Bitcoin Node page offers \"Switch to the full node\" when "
-                     "your AVADO has enough free space (about 1.5 TB)."]
-        s["links"] = [{"label": "Open the Bitcoin Node page", "href": "http://bitcoincore.my.ava.do/#connect",
-                       "style": None}]
-    elif fulcrum != "missing":
+    if fulcrum != "missing":
         s["text"] = ["Wallets such as Sparrow and Electrum connect through the Electrum Server app. Its page shows the "
                      "exact address to type into your wallet."]
         s["links"] = [{"label": "Open the Electrum Server page", "href": "http://fulcrum.my.ava.do", "style": None}]

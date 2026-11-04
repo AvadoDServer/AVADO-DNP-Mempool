@@ -211,6 +211,21 @@ def electrum_answers(host, port, timeout=3):
         return False
 
 
+def use_electrum(node, fulcrum, current):
+    """Whether the explorer should look things up through the Electrum Server.
+
+    On a space-saving (pruned) node the Electrum Server stops for good, so keeping
+    it "while it restarts" would leave the explorer stuck on the first block it
+    cannot fetch (seen on the test box: stalled for good after the switch)."""
+    if node.get("pruned"):
+        return False
+    if fulcrum == "ready":
+        return True
+    if fulcrum == "missing":
+        return False
+    return current  # keep what runs while the Electrum Server restarts
+
+
 class App:
     def __init__(self, env=os.environ):
         self.bitcoin_host = env.get("BITCOIN_HOST") or "DAppNodePackage-bitcoincore.avado.dnp.dappnode.eth"
@@ -334,13 +349,7 @@ class App:
                 for svc in (self.mariadb, self.nginx, self.backend):
                     svc.tick()
                 self.check_node()
-                fulcrum = self.fulcrum_state()
-                if fulcrum == "ready":
-                    want_electrum = True
-                elif fulcrum == "missing":
-                    want_electrum = False
-                else:
-                    want_electrum = self.electrum  # keep what runs while the Electrum Server restarts
+                want_electrum = use_electrum(self.node, self.fulcrum_state(), self.electrum)
                 if self.node and self.login and self.db_ready:
                     key = (want_electrum, self.login, self.node.get("chain"), indexing_amount(self.node) // 1000)
                     if key != self.backend_key:

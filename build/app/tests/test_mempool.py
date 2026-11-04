@@ -48,6 +48,18 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(main.indexing_amount(node(pruned=True, pruneheight=919900)), 0)
 
 
+class UseElectrumTest(unittest.TestCase):
+    def test_space_saving_node_never_uses_the_electrum_server(self):
+        for fulcrum in ("ready", "busy", "missing"):
+            self.assertFalse(main.use_electrum(node(pruned=True), fulcrum, True))
+
+    def test_full_node(self):
+        self.assertTrue(main.use_electrum(node(), "ready", False))
+        self.assertFalse(main.use_electrum(node(), "missing", True))
+        self.assertTrue(main.use_electrum(node(), "busy", True))  # restarting: keep it
+        self.assertFalse(main.use_electrum(node(), "busy", False))
+
+
 class ModelTest(unittest.TestCase):
     def test_waiting_for_node_download(self):
         m = model(node=node(verificationprogress=0.5, initialblockdownload=True))

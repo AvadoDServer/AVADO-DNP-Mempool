@@ -12,6 +12,8 @@ the build instead of shipping a broken website.
 - No proxy to mempool.space (its paid services are switched off).
 - The AVADO status page is served at /avado/, and /tmp/avado/ready.conf makes
   / open it until the explorer has data.
+- /tmp/avado/https.conf turns on https (port 443) once the box's *.my.ava.do
+  certificate is there (main.py, avadotls.py); empty means http only.
 """
 
 import sys
@@ -37,7 +39,8 @@ AVADO_LOCATION = (
     "\t\tproxy_set_header Host $host;\n"
     "\t\tproxy_set_header X-Avado $http_x_avado;\n"
     "\t}\n"
-    "\tinclude /tmp/avado/ready.conf;"
+    "\tinclude /tmp/avado/ready.conf;\n"
+    "\tinclude /tmp/avado/https.conf;"
 )
 
 CHANGES = {

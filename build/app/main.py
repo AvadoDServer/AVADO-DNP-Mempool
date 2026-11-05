@@ -31,6 +31,7 @@ import threading
 import time
 import urllib.request
 
+import avadotls
 import avadoweb
 from avadoweb import log
 from bitcoinrpc import RPC_IN_WARMUP, BitcoinRpc, RpcError, fetch_login
@@ -48,6 +49,8 @@ BACKEND_CONF = os.path.join(STATE_DIR, "mempool-config.json")
 RUN_DIR = os.environ.get("RUN_DIR", "/tmp/avado")
 DB_SOCKET = os.path.join(RUN_DIR, "mysqld.sock")
 READY_CONF = os.path.join(RUN_DIR, "ready.conf")
+HTTPS_CONF = os.path.join(RUN_DIR, "https.conf")  # empty: http only
+CERT_DIR = os.path.join(RUN_DIR, "certs")
 NGINX_CONF = os.environ.get("NGINX_CONF", "/etc/mempool/nginx.conf")
 PUBLIC_DIR = os.path.join(_HERE, "public")
 BACKEND_PORT = 8999
@@ -431,13 +434,39 @@ class App:
             self.cache = {"at": time.time(), "model": model}
         return model
 
+    def reload_web(self):
+        """nginx -s reload, after nginx -t; False when nginx refuses the files."""
+        test = subprocess.run(["nginx", "-e", "stderr", "-t", "-q", "-c", NGINX_CONF],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        if test.returncode != 0:
+            log("web: nginx refused its files:", test.stderr.strip()[-300:])
+            return False
+        if self.nginx.running():
+            subprocess.run(["nginx", "-e", "stderr", "-c", NGINX_CONF, "-s", "reload"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        return True
+
+    def use_certificate(self, watcher):
+        """The explorer and its AVADO page also on https (port 443), with the box's
+        *.my.ava.do certificate (avadotls). If nginx refuses it: http only, as before."""
+        avadotls.save_pair(watcher.cert, watcher.key, CERT_DIR)
+        avadoweb.write_text(HTTPS_CONF, avadotls.nginx_conf(CERT_DIR), mode=0o644)
+        if self.reload_web():
+            log("web: https on, certificate valid until", watcher.valid_until)
+            return True
+        avadoweb.write_text(HTTPS_CONF, "", mode=0o644)
+        self.reload_web()
+        return False
+
     def run(self):
         signal.signal(signal.SIGTERM, self.shutdown)
         signal.signal(signal.SIGINT, self.shutdown)
         avadoweb.write_text(READY_CONF, "location = / { return 302 /avado/; }\n", mode=0o644)
+        avadoweb.write_text(HTTPS_CONF, "", mode=0o644)
         avadoweb.WebApp(PUBLIC_DIR, self.status, version=VERSION, title="Bitcoin Explorer").serve(
             port=PAGE_PORT, host="127.0.0.1")
         self.nginx.start()
+        avadotls.CertWatcher(self.use_certificate, log=log).start()
         threading.Thread(target=self.start_database_then_loop, daemon=True).start()
         while True:
             time.sleep(3600)

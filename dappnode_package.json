@@ -1,6 +1,6 @@
 {
   "name": "mempool.avado.dnp.dappnode.eth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "upstream": "v3.3.2",
   "title": "Bitcoin Explorer",
   "description": "See the current Bitcoin fees, the transactions waiting for a block and the newest blocks, all looked up on your own Bitcoin node (the mempool explorer). No website learns which transactions or addresses you look at. With the Electrum Server installed it can also look up your addresses. It needs the Bitcoin Node with the full history (at least 1.5 TB free); on a space-saving node its page says so. It opens when your node has finished downloading.",

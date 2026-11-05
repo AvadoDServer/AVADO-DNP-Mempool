@@ -45,6 +45,15 @@ match exactly once, so a new mempool version with different files fails the
 build). Runtime base is Debian bookworm with nginx and MariaDB from Debian.
 Runs as an unprivileged user.
 
+**HTTPS.** The page also answers on https://mempool.my.ava.do (port 443) with the box's
+`*.my.ava.do` certificate, the one the Admin and the other AVADO apps with https use (the
+box's DAPPMANAGER serves it at http://dappmanager.my.ava.do; iso.ava.do is the second source).
+Chrome tries https first ("Always use secure connections"), so without it Chrome showed "This
+site doesn't support a secure connection". The certificate is used only when it is for
+`*.my.ava.do`, valid for at least another hour and matches its key; until then the page stays
+http only and it is checked every 5 minutes, after that daily. http works as before, also in
+the Admin's Setup tab. nginx serves it (`/tmp/avado/https.conf`, written by `build/app/main.py` with `build/app/avadotls.py`, the same file in every AVADO package with `avadoweb.py`); if nginx refuses the files, it stays http only.
+
 ## Licence and reuse
 
 GPL-3.0 (see LICENSE) for the files in this repository. mempool is AGPL-3.0,

@@ -57,7 +57,7 @@ COPY --from=frontend /etc/nginx/conf.d/nginx-mempool.conf /etc/mempool/nginx-mem
 # shipping a broken website.
 COPY build/patch_nginx.py /tmp/patch_nginx.py
 RUN python3 /tmp/patch_nginx.py && rm /tmp/patch_nginx.py \
-    && mkdir -p /tmp/avado/nginx && echo > /tmp/avado/ready.conf \
+    && mkdir -p /tmp/avado/nginx && echo > /tmp/avado/ready.conf && echo > /tmp/avado/https.conf \
     && nginx -t -c /etc/mempool/nginx.conf && rm -rf /tmp/avado
 
 COPY build/app /app

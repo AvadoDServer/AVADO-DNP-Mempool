@@ -1,0 +1,12 @@
+version: '3.4'
+services:
+  mempool.avado.dnp.dappnode.eth:
+    image: 'mempool.avado.dnp.dappnode.eth:0.1.0'
+    build:
+      context: .
+      dockerfile: build/Dockerfile
+    volumes:
+      - 'mempool:/data'
+    restart: always
+volumes:
+  mempool: {}

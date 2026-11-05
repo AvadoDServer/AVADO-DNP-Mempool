@@ -1,0 +1,33 @@
+{
+  "title": "Bitcoin Explorer (mempool)",
+  "components": [
+    {
+      "name": "mempool",
+      "github": "mempool/mempool",
+      "images": [
+        {
+          "var": "backend",
+          "ref": "mempool/backend:v{version}"
+        },
+        {
+          "var": "frontend",
+          "ref": "mempool/frontend:v{version}"
+        }
+      ],
+      "pins": [
+        {
+          "file": "build/Dockerfile",
+          "text": "ARG MEMPOOL_BACKEND=mempool/backend:v{version}@sha256:{backend}"
+        },
+        {
+          "file": "build/Dockerfile",
+          "text": "ARG MEMPOOL_FRONTEND=mempool/frontend:v{version}@sha256:{frontend}"
+        },
+        {
+          "file": "dappnode_package.json",
+          "text": "\"upstream\": \"v{version}\""
+        }
+      ]
+    }
+  ]
+}
